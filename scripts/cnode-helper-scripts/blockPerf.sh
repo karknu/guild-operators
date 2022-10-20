@@ -18,6 +18,13 @@
 
 #AddrBlacklist="192.168.1.123, " # uncomment with your block producers or other nodes IP that you do not want to expose to common view
 
+# MQTT config options, requires mosquitto_pub
+#MQTT_HOST=""          # IP address of MQTT bridge
+#MQTT_PORT=""
+#MQTT_USER=""
+#MQTT_PW=""
+
+
 ######################################
 # Do NOT modify code below           #
 ######################################
@@ -238,7 +245,9 @@ reportBlock() {
              .data.peer.remote.port //0,
              .data.delay //0,
              .data.size //0,
-             .env //0
+             .env //0,
+	     .data.peer.local.addr //0,
+             .data.peer.local.port //0
              ] | @tsv' <<< "${blockLogLine}")
             read -ra line_data_arr <<< ${line_tsv}
             [ -z "$blockTimeCbf" ] && blockTimeCbf=$(date -d ${line_data_arr[0]} +"%F %T,%3N" || 0)
@@ -247,6 +256,8 @@ reportBlock() {
             [ -z "$blockDelay" ] && blockDelay=${line_data_arr[3]}
             [ -z "$blockSize" ] && blockSize=${line_data_arr[4]}
             [ -z "$BPenv" ] && envBP=${line_data_arr[5]}
+            [ -z "$blockTimeCbfLocalAddr" ] && blockTimeCbfLocalAddr=${line_data_arr[6]}
+            [ -z "$blockTimeCbfLocalPort" ] && blockTimeCbfLocalPort=${line_data_arr[7]}
             missingCbf=false
             # pick the fetch request time from the effective blockk serving peer
             sbx=$(echo "${blockLog}" | grep -E -m 1 "SendFetchRequest.*${blockTimeCbfAddr}.*${blockTimeCbfPort}" | jq -r '[.at //0,.data.deltaq.G //0] | @tsv')
@@ -306,6 +317,7 @@ reportBlock() {
       if [[ "${deltaSlotTbh}" -lt 10000 ]] && [[ "$((blockSlot-slotHeightPrev))" -lt 200 ]]; then
         [[ ${SELFISH_MODE} != "Y" ]] && result=$(curl -4 -s "https://api.clio.one/blocklog/v1/?magic=${NWMAGIC}&bpv=${BP_VERSION}&nport=${CNODE_PORT}&bn=${iblockHeight}&slot=${blockSlot}&tbh=${deltaSlotTbh}&tbhAddr=${blockTimeTbhAddrPublic}&tbhPort=${blockTimeTbhPortPublic}&sfr=${deltaTbhSfr}&cbf=${deltaSfrCbf}&ab=${deltaCbfAb}&g=${blockTimeG}&size=${blockSize}&addr=${blockTimeCbfAddrPublic}&port=${blockTimeCbfPortPublic}&bh=${blockHash}&bpenv=${envBP}" &)
         [[ ${SERVICE_MODE} != "Y" ]] && echo -e "${FG_YELLOW}Block:.... ${iblockHeight} ( ${blockHash:0:10} ...)\n${NC} Slot..... ${blockSlot} ($((blockSlot-slotHeightPrev))s)\n ......... ${blockSlotTime}\n Header... ${blockTimeTbh} (+${deltaSlotTbh} ms) from ${blockTimeTbhAddr}:${blockTimeTbhPort}\n RequestX. ${blockTimeSfrX} (+${deltaTbhSfr} ms)\n Block.... ${blockTimeCbf} (+${deltaSfrCbf} ms) from ${blockTimeCbfAddr}:${blockTimeCbfPort}\n Adopted.. ${blockTimeAb} (+${deltaCbfAb} ms)\n Size..... ${blockSize} bytes\n delay.... ${blockDelay} sec"
+	[[ ! -z ${MQTT_HOST} ]] && resultJson=$(jq --null-input --arg magic "${NWMAGIC}" --arg bpVersion "${BP_VERSION}" --arg blockSize "${blockSize}" --arg blockNo "${iblockHeight}" --arg slotNo "${blockSlot}" --arg blockHash "${blockHash}" --arg headerDelta "${deltaSlotTbh}" --arg headerRemoteAddr "${blockTimeTbhAddr}" --arg headerRemotePort "${blockTimeTbhPort}" --arg blockReqDelta "${deltaTbhSfr}" --arg blockRspDelta "${deltaSfrCbf}" --arg blockAdoptDelta "${deltaCbfAb}" --arg blockRemoteAddress "${blockTimeCbfAddrPublic}" --arg blockRemotePort "${blockTimeCbfPortPublic}" --arg blockLocalAddress "${blockTimeCbfLocalAddr}" --arg blockLocalPort "${blockTimeCbfLocalPort}" --arg blockG "${blockTimeG}" '{ magic : $magic , bpVersion : $bpVersion , blockNo : $blockNo , slotNo : $slotNo , blockHash : $blockHash, blockSize : $blockSize, headerRemoteAddr : $headerRemoteAddr, headerRemotePort : $headerRemotePort, headerDelta : $headerDelta,  blockReqDelta : $blockReqDelta , blockRspDelta : $blockRspDelta , blockAdoptDelta : $blockAdoptDelta , blockRemoteAddress : $blockRemoteAddress , blockRemotePort : $blockRemotePort,  blockLocalAddress : $blockLocalAddress, blockLocalPort : $blockLocalPort, blockG : $blockG }' | mosquitto_pub -h ${MQTT_HOST} -p ${MQTT_PORT} -u ${MQTT_USER} -P ${MQTT_PW} -t blockperf/${MQTT_USER}/${blockTimeCbfLocalAddr} --stdin-file &)
       else
         # skip block reporting while node is synching up
         [[ ${SERVICE_MODE} != "Y" ]] && echo -e "${FG_YELLOW}Block:.... ${iblockHeight} skipped\n${NC} Slot..... ${blockSlot}\n ......... ${blockSlotTime}\n now...... $(date +"%F %T")"
@@ -427,3 +439,4 @@ do
     forksPrev=$forks;
   fi
 done
+
